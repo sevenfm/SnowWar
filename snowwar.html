@@ -1,0 +1,1118 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Снежная война (SnowWar, 1998) - Web Port</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin: 0; padding: 10px; background: #0f172a; color: #e2e8f0;
+    font-family: 'Courier New', Courier, monospace;
+    display: flex; flex-direction: column; align-items: center;
+    min-height: 100vh; user-select: none;
+  }
+  header {
+    width: 100%; max-width: 960px;
+    display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center;
+    gap: 8px; padding: 8px 0; font-size: 15px; border-bottom: 1px solid #334155; margin-bottom: 8px;
+  }
+  .btn {
+    background: #1e293b; color: #38bdf8; border: 1px solid #38bdf8;
+    padding: 7px 14px; border-radius: 4px; cursor: pointer; font-family: inherit; font-size: 13px;
+    display: inline-block;
+  }
+  .btn:hover, .btn:active { background: #38bdf8; color: #0f172a; }
+  #screen-wrap {
+    position: relative; width: 100%; max-width: 960px; aspect-ratio: 4 / 3;
+    border: 3px solid #475569; box-shadow: 0 12px 36px rgba(0,0,0,0.75);
+    background: #000; overflow: hidden;
+  }
+  canvas {
+    width: 100%; height: 100%;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    display: block;
+    touch-action: manipulation;
+  }
+  #nameModal {
+    display: none; position: absolute; inset: 0;
+    background: rgba(15, 23, 42, 0.92);
+    flex-direction: column; align-items: center; justify-content: center;
+    padding: 20px; text-align: center; z-index: 10;
+  }
+  #nameModal h3 { color: #4ade80; margin: 0 0 10px 0; font-size: 24px; }
+  #nameModal input {
+    background: #0f172a; color: #fff; border: 2px solid #38bdf8;
+    padding: 10px 14px; font-size: 18px; font-family: inherit;
+    border-radius: 4px; width: 260px; text-align: center; margin-bottom: 14px;
+  }
+  .hint {
+    width: 100%; max-width: 960px; font-size: 14px; color: #94a3b8;
+    margin-top: 12px; line-height: 1.55;
+  }
+  #errBox {
+    width: 100%; max-width: 960px; color: #f87171; background: #450a0a;
+    padding: 8px; border-radius: 4px; font-size: 13px; display: none; margin-top: 8px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div><strong>СНЕЖНАЯ ВОЙНА (SnowWar, 1998)</strong> — 960x720 (1.5x SVGA)</div>
+  <div>
+    <label class="btn">
+      📂 Загрузить файлы GRAPH/*
+      <input type="file" id="assetInput" multiple accept=".raw,.pal,.RAW,.PAL" style="display:none">
+    </label>
+    <span id="assetStatus" style="margin-left:8px;color:#94a3b8;font-size:13px;">Встроенная графика</span>
+  </div>
+</header>
+
+<div id="screen-wrap">
+  <canvas id="vga" width="640" height="480"></canvas>
+  <div id="nameModal">
+    <h3>🏆 ПОБЕДА! НОВЫЙ РЕКОРД!</h3>
+    <p id="scoreText" style="margin:0 0 12px 0;color:#facc15;font-size:16px;"></p>
+    <input type="text" id="playerNameInput" maxlength="15" placeholder="Введите ваше имя" value="Игрок">
+    <button class="btn" id="saveScoreBtn" style="font-size:15px;padding:9px 22px;">Сохранить рекорд</button>
+  </div>
+</div>
+
+<div id="errBox"></div>
+
+<div class="hint">
+  <strong>Инструкция:</strong> Нажмите <strong>1. ИГРА</strong> в правом нижнем углу, чтобы начать сражение. Выберите одного из своих <strong>синих снеговиков</strong> (в правом верхнем углу). <span style="color:#4ade80;">Зелёные клетки</span> показывают, куда выбранный снеговик может дойти за текущий ход, а <span style="color:#f87171;">красная рамка</span> вокруг врага показывает, по кому можно выстрелить прямо сейчас. Цель игры — уничтожить всю армию противника или захватить его <strong>красный флаг</strong> в левом нижнем углу! Встав на клетку с бонусом (прорубь, санки, костёр), снеговик меняет свой тип.
+</div>
+
+<script>
+window.onerror = function(msg, url, line) {
+  var box = document.getElementById('errBox');
+  if (box) {
+    box.style.display = 'block';
+    box.textContent = 'Ошибка (строка ' + line + '): ' + msg;
+  }
+};
+
+// ============================================================================
+// 1. CONSTANTS & DATA TABLES (Exact match to CONST.H & WINDOW.H)
+// ============================================================================
+var MAX_X = 30, MAX_Y = 20;
+var CELL_WIDTH = 20, CELL_HEIGHT = 20;
+var MAX_NAME = 16, MAX_BONUS = 6, BONUS_TYPE = 3, CELL_TYPE = 37;
+var NUM_REC = 10, SNOWMAN_TYPE = 4, MAX_SOLD = 5, MAX_PATH = 100;
+var ICE_WIDTH = 14, CRUMB_WIDTH = 13, MAX_REPIT = 5, MAX_TREE = 100;
+var MIN_LENGTH = 10, MAXINT = 32767;
+var CELL_MOVE = [2, 3, 3, 1, 0]; // SNOW=2, ICE=3, CRUMB=3, PATH=1, TREE=0
+
+var SOLID=0, U=1, D=2, L=3, R=4, DLI=5, DLO=6, DRI=7, DRO=8, ULI=9, ULO=10, URI=11, URO=12;
+var SNOW=0, ICE=1, CRUMB=14, PATH_U=27, PATH_D=28, PATH_L=29, PATH_R=30,
+    PATH_UL=31, PATH_UR=32, PATH_DL=33, PATH_DR=34, TREE_SNOW=35, TREE_CRUMB=36;
+var SNOW_MAN=0, ICE_MAN=1, FAST_MAN=2, FIRE_MAN=3;
+var SNOW_MAN_NAME=0, ICE_MAN_NAME=1, FAST_MAN_NAME=2, FIRE_MAN_NAME=3,
+    EMPTY_NAME=4, AP_PIC=5, HEALTH_PIC=6, COST_PIC=7, DAMAGE_PIC=8, STATUS_EMPTY=9;
+var COMPUTER=0, HUMAN=1;
+
+var SnowType = [
+  { name: "Снеговик обыкновенный", AP: 6, Health: 3, Range: 4, CostToFire: 3, Damage: 1 },
+  { name: "Ледовик",               AP: 6, Health: 5, Range: 3, CostToFire: 2, Damage: 2 },
+  { name: "Саночник",              AP: 8, Health: 3, Range: 4, CostToFire: 3, Damage: 1 },
+  { name: "Огневик",               AP: 6, Health: 3, Range: 3, CostToFire: 3, Damage: 3 }
+];
+
+// ============================================================================
+// 2. SAFE STORAGE & TGE .RAW/.PAL LOADER
+// ============================================================================
+var RawAssets = {};
+var PalAssets = {};
+
+var defaultHighScores = [
+  { name: "Litsky A.Yu.", points: 420 },
+  { name: "Vinogradov A.", points: 380 },
+  { name: "Demidov A.K.", points: 340 },
+  { name: "SUSU PMF-201", points: 300 },
+  { name: "Chelyabinsk98", points: 250 },
+  { name: "Snow General", points: 210 },
+  { name: "Frosty", points: 180 },
+  { name: "Ice King", points: 140 },
+  { name: "Winter Wolf", points: 110 },
+  { name: "Rookie", points: 80 }
+];
+
+function loadScoresSafe() {
+  try {
+    var raw = window.localStorage.getItem('snowwar_topten');
+    if (raw) return JSON.parse(raw);
+  } catch (e) {}
+  return defaultHighScores.slice();
+}
+
+function saveScoresSafe(scores) {
+  try {
+    window.localStorage.setItem('snowwar_topten', JSON.stringify(scores));
+  } catch (e) {}
+}
+
+function clearScoresSafe() {
+  try {
+    window.localStorage.removeItem('snowwar_topten');
+  } catch (e) {}
+}
+
+document.getElementById('assetInput').addEventListener('change', async function(e) {
+  var files = Array.prototype.slice.call(e.target.files);
+  var loaded = 0;
+  for (var f = 0; f < files.length; f++) {
+    var file = files[f];
+    var name = file.name.toLowerCase();
+    var buf = await file.arrayBuffer();
+    var bytes = new Uint8Array(buf);
+    if (name.endsWith('.pal') && bytes.length >= 768) {
+      var maxVal = 0;
+      for (var i = 0; i < 768; i++) if (bytes[i] > maxVal) maxVal = bytes[i];
+      var pal = new Uint8Array(768);
+      var scale = maxVal <= 63 ? 4 : 1;
+      for (var j = 0; j < 768; j++) pal[j] = Math.min(255, bytes[j] * scale);
+      PalAssets[name] = pal;
+      loaded++;
+    } else if (name.endsWith('.raw') && bytes.length >= 4) {
+      var w = bytes[0] | (bytes[1] << 8);
+      var h = bytes[2] | (bytes[3] << 8);
+      if (w > 0 && w <= 640 && h > 0 && h <= 480) {
+        RawAssets[name] = { w: w, h: h, pixels: bytes.subarray(4, 4 + w * h) };
+        loaded++;
+      }
+    }
+  }
+  document.getElementById('assetStatus').textContent = 'Загружено файлов: ' + loaded;
+  render();
+});
+
+function hasRaw(rawName) {
+  return !!RawAssets[rawName.toLowerCase()];
+}
+
+function drawRawToCtx(ctx, rawName, palName, dx, dy, transparentZero) {
+  var raw = RawAssets[rawName.toLowerCase()];
+  var pal = PalAssets[palName.toLowerCase()] || PalAssets['game.pal'] || PalAssets['main.pal'];
+  if (!raw || !pal) return false;
+  var imgData = ctx.getImageData(dx, dy, raw.w, raw.h);
+  var data = imgData.data;
+  for (var i = 0; i < raw.w * raw.h; i++) {
+    var idx = raw.pixels[i];
+    if (transparentZero && idx === 0) continue;
+    var p = i * 4;
+    data[p]     = pal[idx * 3];
+    data[p + 1] = pal[idx * 3 + 1];
+    data[p + 2] = pal[idx * 3 + 2];
+    data[p + 3] = 255;
+  }
+  ctx.putImageData(imgData, dx, dy);
+  return true;
+}
+
+// ============================================================================
+// 3. COORD & MAP GENERATION (1:1 Port of COORD.H & MAPBODY.H)
+// ============================================================================
+function rnd(n) { return Math.floor(Math.random() * n); }
+function dist(x1, y1, x2, y2) { return Math.floor(Math.sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1))); }
+function dist2(x1, y1, x2, y2) { return (x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1); }
+function isDiag(x1, y1, x2, y2) { return dist2(x1, y1, x2, y2) === 1 ? 0 : 1; }
+
+function GameMap() {
+  this.CFlag = { x: 0, y: MAX_Y - 1 };
+  this.HFlag = { x: MAX_X - 1, y: 0 };
+  this.SnowMap = [];
+  this.Fill = [];
+  for (var y = 0; y < MAX_Y; y++) {
+    var rowS = [], rowF = [];
+    for (var x = 0; x < MAX_X; x++) { rowS.push(SNOW); rowF.push(MAXINT); }
+    this.SnowMap.push(rowS);
+    this.Fill.push(rowF);
+  }
+  this.Bonuses = [];
+  this.Origin = { x: 0, y: 0 };
+
+  this.putIceCrumb();
+  this.putTrees();
+  this.putPath();
+  this.putBonuses();
+}
+
+GameMap.prototype.inMap = function(x, y) {
+  return y >= 0 && y < MAX_Y && x >= 0 && x < MAX_X;
+};
+
+GameMap.prototype.putSolid = function(Type, Width, Direct, Beg) {
+  var Shift = [[0, 1], [1, 0], [0, 0], [1, 1]];
+  var AllShift = [
+    [{ x: -1, y: -1 }, { x: 1, y: -1 }],
+    [{ x: 1, y: -1 }, { x: 1, y: 1 }]
+  ];
+  var Pos = [{ x: Beg.x, y: Beg.y }, { x: Beg.x, y: Beg.y }];
+  var Flag = [true, true];
+  var fl = 0;
+  var guard = 0;
+
+  while ((Flag[0] || Flag[1]) && guard++ < 400) {
+    for (var s = 0; s < 2; s++) {
+      var IndexShift;
+      var d = Math.floor(Math.sqrt(dist2(Pos[0].x, Pos[0].y, Pos[1].x, Pos[1].y)));
+      if (d <= 2 && fl) IndexShift = rnd(2);
+      else if (d >= Width) { IndexShift = rnd(2) + 2; fl = 1; }
+      else IndexShift = rnd(2);
+
+      var sh = AllShift[Direct][Shift[IndexShift][s]];
+      Pos[s] = { x: Pos[s].x + sh.x, y: Pos[s].y + sh.y };
+      Flag[s] = this.inMap(Pos[s].x, Pos[s].y);
+      if (Flag[s]) this.SnowMap[Pos[s].y][Pos[s].x] = Type + SOLID;
+    }
+    if ((Flag[0] && Flag[1] && Pos[0].y === Pos[1].y) || ((Flag[0] ? 1 : 0) + (Flag[1] ? 1 : 0)) % 2 === 1) {
+      var i = Flag[0] ? Pos[0].y : Pos[1].y;
+      i = Math.max(0, Math.min(MAX_Y - 1, i));
+      var j = Math.max(0, Math.min(MAX_X - 1, Pos[0].x + 1));
+      for (; j < Pos[1].x && j < MAX_X; j++) this.SnowMap[i][j] = Type + SOLID;
+    }
+  }
+};
+
+GameMap.prototype.putIceCrumb = function() {
+  var Direct = rnd(2);
+  this.putSolid(ICE, ICE_WIDTH, Direct, { x: rnd(MAX_X), y: rnd(MAX_Y - 6) + 3 });
+  var MaxU = MAX_Y, MaxD = 0, MaxL = MAX_X, MaxR = 0;
+  for (var i = 0; i < MAX_Y; i++) {
+    for (var j = 0; j < MAX_X; j++) {
+      if (this.SnowMap[i][j] === ICE + SOLID) {
+        if (i < MaxU) MaxU = i;
+        if (i > MaxD) MaxD = i;
+        if (j < MaxL) MaxL = j;
+        if (j > MaxR) MaxR = j;
+      }
+    }
+  }
+  MaxR += ICE_WIDTH + 3; MaxL -= (ICE_WIDTH + 3); MaxU -= 2; MaxD += 2;
+  var CrumY = rnd(MAX_Y - 6) + 3, CrumX = rnd(MAX_X);
+  var k = 0;
+  for (; k < 50 * MAX_REPIT && CrumX >= MaxL && CrumX <= MaxR && CrumY >= MaxU && CrumY <= MaxD; k++) {
+    CrumY = rnd(MAX_Y - 6) + 3; CrumX = rnd(MAX_X);
+  }
+  if (k < 50 * MAX_REPIT) {
+    if (CrumX >= MaxL && CrumX <= MaxR) Direct = 1 - Direct;
+    else Direct = rnd(2);
+    this.putSolid(CRUMB, CRUMB_WIDTH, Direct, { x: CrumX, y: CrumY });
+    this.putBorder(CRUMB);
+  }
+  this.putBorder(ICE);
+};
+
+GameMap.prototype.putBorder = function(Type) {
+  for (var i = 0; i < MAX_Y; i++) {
+    for (var j = 0; j < MAX_X; j++) {
+      if (this.SnowMap[i][j] === SNOW) {
+        if (i > 0 && this.SnowMap[i - 1][j] === Type + SOLID) this.SnowMap[i][j] = Type + U;
+        else if (i < MAX_Y - 1 && this.SnowMap[i + 1][j] === Type + SOLID) this.SnowMap[i][j] = Type + D;
+        else if (j > 0 && this.SnowMap[i][j - 1] === Type + SOLID) this.SnowMap[i][j] = Type + L;
+        else if (j < MAX_X - 1 && this.SnowMap[i][j + 1] === Type + SOLID) this.SnowMap[i][j] = Type + R;
+      }
+    }
+  }
+};
+
+GameMap.prototype.putTrees = function() {
+  var Numb = rnd(Math.floor(MAX_TREE / 3)) + 15;
+  for (var i = 0; i < Numb; i++) {
+    var Type = rnd(4) >= 3 ? TREE_SNOW : TREE_CRUMB;
+    for (var rep = 0; rep < MAX_REPIT; rep++) {
+      var x = rnd(MAX_X), y = rnd(MAX_Y);
+      if ((x === this.CFlag.x && y === this.CFlag.y) || (x === this.HFlag.x && y === this.HFlag.y)) continue;
+      if (Type === TREE_SNOW && this.SnowMap[y][x] === SNOW) { this.SnowMap[y][x] = TREE_SNOW; break; }
+      if (Type === TREE_CRUMB && this.SnowMap[y][x] === CRUMB + SOLID) { this.SnowMap[y][x] = TREE_CRUMB; break; }
+    }
+  }
+};
+
+GameMap.prototype.putPath = function() {
+  var x = rnd(MAX_X - 4) + 2, y = rnd(MAX_Y - 4) + 2;
+  var dir = rnd(4);
+  var dirs = [{x:0,y:-1},{x:-1,y:0},{x:0,y:1},{x:1,y:0}];
+  for (var step = 0; step < 18; step++) {
+    var nx = x + dirs[dir].x, ny = y + dirs[dir].y;
+    if (!this.inMap(nx, ny)) break;
+    if (this.SnowMap[ny][nx] !== TREE_SNOW && this.SnowMap[ny][nx] !== TREE_CRUMB) {
+      this.SnowMap[ny][nx] = PATH_U + dir;
+    }
+    x = nx; y = ny;
+    if (rnd(3) === 0) dir = (dir + (rnd(2) ? 1 : 3)) % 4;
+  }
+};
+
+GameMap.prototype.putBonuses = function() {
+  for (var i = 0; i < MAX_BONUS; i++) {
+    var x, y, guard = 0;
+    do {
+      x = rnd(MAX_X); y = rnd(MAX_Y);
+    } while (
+      guard++ < 200 && (
+        this.costToMove(x, y) === 0 ||
+        this.isBonus(x, y) !== -1 ||
+        (x === this.CFlag.x && y === this.CFlag.y) ||
+        (x === this.HFlag.x && y === this.HFlag.y)
+      )
+    );
+    this.Bonuses.push({ type: rnd(BONUS_TYPE), x: x, y: y });
+  }
+};
+
+GameMap.prototype.isBonus = function(x, y) {
+  for (var i = 0; i < this.Bonuses.length; i++) {
+    var b = this.Bonuses[i];
+    if (b && b.x === x && b.y === y) return b.type;
+  }
+  return -1;
+};
+
+GameMap.prototype.removeBonus = function(x, y) {
+  for (var i = 0; i < this.Bonuses.length; i++) {
+    var b = this.Bonuses[i];
+    if (b && b.x === x && b.y === y) { this.Bonuses[i] = null; return; }
+  }
+};
+
+GameMap.prototype.costToMove = function(x, y) {
+  var t = this.SnowMap[y][x];
+  if (t === SNOW) return CELL_MOVE[0];
+  if (t >= ICE && t < CRUMB) return CELL_MOVE[1];
+  if (t >= CRUMB && t < PATH_U) return CELL_MOVE[2];
+  if (t >= PATH_U && t < TREE_SNOW) return CELL_MOVE[3];
+  return CELL_MOVE[4];
+};
+
+GameMap.prototype.fillMap = function(cx, cy, maxRepeat, soldiers) {
+  this.Origin = { x: cx, y: cy };
+  for (var i = 0; i < MAX_Y; i++)
+    for (var j = 0; j < MAX_X; j++)
+      this.Fill[i][j] = MAXINT;
+  this.Fill[cy][cx] = 0;
+
+  for (var r = maxRepeat; r >= 0; r--) {
+    for (var y = 0; y < MAX_Y; y++) {
+      for (var x = 0; x < MAX_X; x++) {
+        if (this.Fill[y][x] === MAXINT) continue;
+        for (var dx = -1; dx <= 1; dx++) {
+          for (var dy = -1; dy <= 1; dy++) {
+            var nx = x + dx, ny = y + dy;
+            if (!this.inMap(nx, ny)) continue;
+            var occupied = false;
+            for (var s = 0; s < soldiers.length; s++) {
+              if (soldiers[s].x === nx && soldiers[s].y === ny) { occupied = true; break; }
+            }
+            if (occupied) continue;
+            var cost = this.costToMove(nx, ny);
+            if (cost > 0 && dx !== 0 && dy !== 0) cost += 1;
+            if (cost > 0 && this.Fill[ny][nx] > this.Fill[y][x] + cost) {
+              this.Fill[ny][nx] = this.Fill[y][x] + cost;
+            }
+          }
+        }
+      }
+    }
+  }
+};
+
+GameMap.prototype.findPath = function(tx, ty) {
+  if (!this.costToMove(tx, ty) || this.Fill[ty][tx] === MAXINT) return [];
+  var x = tx, y = ty;
+  var temp = [];
+  var guard = 0;
+  while ((x !== this.Origin.x || y !== this.Origin.y) && guard++ < MAX_PATH) {
+    temp.push({ x: x, y: y });
+    var min = MAXINT, bestX = x, bestY = y;
+    for (var dx = -1; dx <= 1; dx++) {
+      for (var dy = -1; dy <= 1; dy++) {
+        if (!dx && !dy) continue;
+        var nx = x + dx, ny = y + dy;
+        if (this.inMap(nx, ny)) {
+          var c = this.Fill[ny][nx];
+          if (c < min || (c === min && (dx === 0 || dy === 0))) {
+            min = c; bestX = nx; bestY = ny;
+          }
+        }
+      }
+    }
+    x = bestX; y = bestY;
+  }
+  return temp.reverse();
+};
+
+// ============================================================================
+// 4. GAME STATE, ARMIES, AI & HIGH SCORES
+// ============================================================================
+var canvas = document.getElementById('vga');
+var ctx = canvas.getContext('2d');
+
+var screenState = 'MAIN'; // 'MAIN' | 'GAME' | 'TOPTEN' | 'ABOUT'
+var map = null;
+var humanArmy = [], compArmy = [];
+var selectedUnit = null;
+var numbTurn = 0;
+var isBusy = false;
+var isComputerTurn = false;
+var statusMsg = "Выберите снеговика для хода";
+var activeProjectile = null;
+var activeExplosion = null;
+var pressedButtonIdx = -1;
+var pendingScore = 0, pendingPlace = -1;
+var highScores = loadScoresSafe();
+
+// Check if a player unit can fire at target coordinates right now (GAME.H SnowMan::CanFire)
+function canUnitFireAt(attacker, tx, ty) {
+  if (!attacker) return false;
+  var st = SnowType[attacker.type];
+  return (dist(attacker.x, attacker.y, tx, ty) <= st.Range) && (st.CostToFire <= attacker.ap);
+}
+
+function createArmy(side, existing) {
+  var army = [];
+  for (var s = 0; s < MAX_SOLD; s++) {
+    var x, y, conflict, guard = 0;
+    do {
+      if (side === COMPUTER) {
+        x = rnd(Math.floor(MAX_X / 4));
+        y = MAX_Y - 1 - rnd(Math.floor(MAX_Y / 4));
+      } else {
+        x = MAX_X - 1 - rnd(Math.floor(MAX_X / 4));
+        y = rnd(Math.floor(MAX_Y / 4));
+      }
+      conflict = (x === map.CFlag.x && y === map.CFlag.y) ||
+                 (x === map.HFlag.x && y === map.HFlag.y) ||
+                 army.some(function(u) { return u.x === x && u.y === y; }) ||
+                 existing.some(function(u) { return u.x === x && u.y === y; });
+    } while (guard++ < 300 && (map.costToMove(x, y) === 0 || conflict || map.isBonus(x, y) !== -1));
+
+    army.push({
+      side: side, type: SNOW_MAN, x: x, y: y,
+      ap: SnowType[SNOW_MAN].AP,
+      health: SnowType[SNOW_MAN].Health
+    });
+  }
+  return army;
+}
+
+function startNewBattle() {
+  map = new GameMap();
+  compArmy = createArmy(COMPUTER, []);
+  humanArmy = createArmy(HUMAN, compArmy);
+  selectedUnit = humanArmy[0];
+  numbTurn = 1;
+  isBusy = false;
+  isComputerTurn = false;
+  map.fillMap(selectedUnit.x, selectedUnit.y, selectedUnit.ap, humanArmy.concat(compArmy));
+  statusMsg = "Ход 1: Ваш ход";
+  screenState = 'GAME';
+  render();
+}
+
+function applyBonusIfPresent(u) {
+  var b = map.isBonus(u.x, u.y);
+  if (b !== -1) {
+    map.removeBonus(u.x, u.y);
+    u.type = b + 1;
+    u.ap = 0;
+    u.health = SnowType[u.type].Health;
+    statusMsg = "Бонус: " + SnowType[u.type].name;
+  }
+}
+
+function sleep(ms) {
+  return new Promise(function(resolve) { setTimeout(resolve, ms); });
+}
+
+async function animateSlide(fromX, fromY, toX, toY, bulletType, durationMs) {
+  var steps = 8;
+  for (var i = 1; i <= steps; i++) {
+    activeProjectile = {
+      x: Math.floor(fromX + (toX - fromX) * (i / steps)),
+      y: Math.floor(fromY + (toY - fromY) * (i / steps)),
+      type: bulletType
+    };
+    render();
+    await sleep(durationMs / steps);
+  }
+  activeProjectile = null;
+  render();
+}
+
+async function fireSnowball(attacker, target) {
+  var st = SnowType[attacker.type];
+  var d = dist(attacker.x, attacker.y, target.x, target.y);
+  attacker.ap = Math.max(0, attacker.ap - st.CostToFire);
+
+  var sx = attacker.x * 20 + 25, sy = attacker.y * 20 + 25;
+  var tx = target.x * 20 + 25, ty = target.y * 20 + 25;
+  var hit = rnd(st.Range) >= Math.floor((st.Range + d) / 3);
+
+  await animateSlide(
+    sx, sy,
+    hit ? tx : tx + (rnd(2) ? 8 : -8),
+    hit ? ty : ty + (rnd(2) ? 8 : -8),
+    attacker.type,
+    150
+  );
+
+  if (hit) {
+    activeExplosion = { x: target.x * 20 + 20, y: target.y * 20 + 20, type: attacker.type };
+    render();
+    await sleep(90);
+    activeExplosion = null;
+
+    target.health = Math.max(0, target.health - st.Damage);
+    statusMsg = "Попадание! -" + st.Damage + " HP";
+    if (target.health === 0) {
+      if (target.side === COMPUTER) compArmy = compArmy.filter(function(u) { return u !== target; });
+      else humanArmy = humanArmy.filter(function(u) { return u !== target; });
+      if (selectedUnit === target) selectedUnit = humanArmy[0] || null;
+      statusMsg = "Снеговик растаял!";
+    }
+  } else {
+    statusMsg = "Промах!";
+  }
+  render();
+}
+
+function showVictoryModal(pts, place) {
+  pendingScore = pts;
+  pendingPlace = place;
+  var modal = document.getElementById('nameModal');
+  document.getElementById('scoreText').textContent = 'Очки: ' + pts + ' (Место в таблице #' + (place + 1) + ')';
+  modal.style.display = 'flex';
+  document.getElementById('playerNameInput').focus();
+}
+
+document.getElementById('saveScoreBtn').addEventListener('click', function() {
+  var nameVal = document.getElementById('playerNameInput').value.trim() || 'Player';
+  highScores.splice(pendingPlace, 0, { name: nameVal.slice(0, 15), points: pendingScore });
+  highScores = highScores.slice(0, NUM_REC);
+  saveScoresSafe(highScores);
+  document.getElementById('nameModal').style.display = 'none';
+  screenState = 'TOPTEN';
+  render();
+});
+
+function checkVictory() {
+  var capturedCFlag = humanArmy.some(function(u) { return u.x === map.CFlag.x && u.y === map.CFlag.y; });
+  if (compArmy.length === 0 || capturedCFlag) {
+    var pts = Math.max(10, Math.floor(10 * (MAX_SOLD - compArmy.length) + 50 * humanArmy.length - numbTurn * 2));
+    var place = -1;
+    for (var i = 0; i < highScores.length; i++) {
+      if (pts > highScores[i].points) { place = i; break; }
+    }
+    if (place !== -1) {
+      showVictoryModal(pts, place);
+    } else {
+      alert("Победа! Ваши очки: " + pts);
+      screenState = 'TOPTEN';
+    }
+    render();
+    return true;
+  }
+  var capturedHFlag = compArmy.some(function(u) { return u.x === map.HFlag.x && u.y === map.HFlag.y; });
+  if (humanArmy.length === 0 || capturedHFlag) {
+    alert("Поражение! Армия компьютера победила.");
+    screenState = 'MAIN';
+    render();
+    return true;
+  }
+  return false;
+}
+
+async function runComputerTurn() {
+  if (isBusy) return;
+  isBusy = true;
+  isComputerTurn = true;
+  var prevSelected = selectedUnit;
+  selectedUnit = null; // Hide player selection and green reach tiles during enemy turn (as in HumanArmy::Move END_TURN)
+  statusMsg = "Ход компьютера...";
+  render();
+  await sleep(200);
+
+  var units = compArmy.slice();
+  for (var idx = 0; idx < units.length; idx++) {
+    var s = units[idx];
+    if (compArmy.indexOf(s) === -1 || humanArmy.length === 0) continue;
+    var guard = 0;
+    while (s.ap > 0 && guard++ < 10) {
+      map.fillMap(s.x, s.y, MAX_Y, humanArmy.concat(compArmy));
+
+      if (map.Fill[map.HFlag.y][map.HFlag.x] <= s.ap) {
+        s.x = map.HFlag.x; s.y = map.HFlag.y; s.ap = 0;
+        isBusy = false;
+        isComputerTurn = false;
+        if (checkVictory()) return;
+      }
+
+      var nearest = humanArmy[0];
+      var minDist = dist2(s.x, s.y, nearest.x, nearest.y);
+      for (var h = 1; h < humanArmy.length; h++) {
+        var d2 = dist2(s.x, s.y, humanArmy[h].x, humanArmy[h].y);
+        if (d2 < minDist) { minDist = d2; nearest = humanArmy[h]; }
+      }
+
+      var st = SnowType[s.type];
+      if (dist(s.x, s.y, nearest.x, nearest.y) <= st.Range && s.ap >= st.CostToFire) {
+        await fireSnowball(s, nearest);
+        if (checkVictory()) { isBusy = false; isComputerTurn = false; return; }
+        continue;
+      }
+
+      var others = humanArmy.filter(function(u) { return u !== nearest; }).concat(compArmy);
+      map.fillMap(s.x, s.y, MAX_Y, others);
+      var path = map.findPath(nearest.x, nearest.y);
+      if (path.length > 0) {
+        var step = path[0];
+        var cost = map.costToMove(step.x, step.y) + isDiag(s.x, s.y, step.x, step.y);
+        var occupied = humanArmy.concat(compArmy).some(function(u) { return u.x === step.x && u.y === step.y; });
+        if (cost <= s.ap && !occupied) {
+          s.ap -= cost;
+          s.x = step.x; s.y = step.y;
+          applyBonusIfPresent(s);
+          render();
+          await sleep(80);
+          if (checkVictory()) { isBusy = false; isComputerTurn = false; return; }
+          continue;
+        }
+      }
+      break;
+    }
+  }
+
+  for (var c = 0; c < compArmy.length; c++) compArmy[c].ap = SnowType[compArmy[c].type].AP;
+  for (var hm = 0; hm < humanArmy.length; hm++) humanArmy[hm].ap = SnowType[humanArmy[hm].type].AP;
+  numbTurn++;
+  isComputerTurn = false;
+  if (prevSelected && humanArmy.indexOf(prevSelected) !== -1) {
+    selectedUnit = prevSelected;
+  } else {
+    selectedUnit = humanArmy[0] || null;
+  }
+  if (selectedUnit) {
+    map.fillMap(selectedUnit.x, selectedUnit.y, selectedUnit.ap, humanArmy.concat(compArmy));
+  }
+  statusMsg = "Ход " + numbTurn + ": Ваш ход";
+  isBusy = false;
+  render();
+}
+
+// ============================================================================
+// 5. RENDERING (640x480 SVGA Layout matching WINDOW.H & GRAPH.H)
+// ============================================================================
+function drawOutlinedText(text, x, y, fillStyle, strokeStyle, lineWidth) {
+  ctx.save();
+  ctx.lineJoin = 'round';
+  ctx.miterLimit = 2;
+  ctx.strokeStyle = strokeStyle || '#000000';
+  ctx.lineWidth = lineWidth || 4;
+  ctx.strokeText(text, x, y);
+  ctx.fillStyle = fillStyle || '#ffffff';
+  ctx.fillText(text, x, y);
+  ctx.restore();
+}
+
+function render() {
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, 640, 480);
+
+  if (screenState === 'MAIN') {
+    if (!drawRawToCtx(ctx, 'main.raw', 'main.pal', 0, 0, false)) {
+      var grad = ctx.createLinearGradient(0, 0, 0, 480);
+      grad.addColorStop(0, '#0c4a6e'); grad.addColorStop(1, '#1e3a8a');
+      ctx.fillStyle = grad; ctx.fillRect(0, 0, 640, 480);
+
+      ctx.fillStyle = '#e0f2fe';
+      ctx.beginPath(); ctx.arc(110, 310, 45, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(110, 240, 32, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(110, 190, 22, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#f97316';
+      ctx.beginPath(); ctx.moveTo(110, 190); ctx.lineTo(135, 195); ctx.lineTo(110, 198); ctx.fill();
+
+      ctx.fillStyle = '#ffffff'; ctx.font = 'bold 40px Courier New';
+      ctx.fillText('СНЕЖНАЯ ВОЙНА', 150, 65);
+      ctx.font = 'bold 16px Courier New'; ctx.fillStyle = '#7dd3fc';
+      ctx.fillText('SNOW WAR (ЮУрГУ / SUSU, Челябинск 1998)', 115, 95);
+
+      var btns = [
+        { x: 480, y: 300, w: 159, h: 179, title: '1. ИГРА', sub: 'Начать сражение', bg: '#15803d' },
+        { x: 350, y: 90,  w: 169, h: 99,  title: '2. РЕКОРДЫ', sub: 'Таблица лучших', bg: '#1e293b' },
+        { x: 190, y: 150, w: 109, h: 69,  title: '3. АВТОРЫ', sub: 'О программе', bg: '#1e293b' },
+        { x: 0,   y: 420, w: 199, h: 59,  title: '4. СБРОС', sub: 'Сброс рекордов', bg: '#7f1d1d' }
+      ];
+      for (var i = 0; i < btns.length; i++) {
+        var b = btns[i];
+        ctx.fillStyle = b.bg;
+        ctx.fillRect(b.x, b.y, b.w, b.h);
+        ctx.strokeStyle = '#38bdf8'; ctx.lineWidth = 2;
+        ctx.strokeRect(b.x, b.y, b.w, b.h);
+        ctx.fillStyle = '#fff'; ctx.font = 'bold 14px Courier New';
+        ctx.fillText(b.title, b.x + 8, b.y + 30);
+        ctx.fillStyle = '#cbd5e1'; ctx.font = '11px Courier New';
+        ctx.fillText(b.sub, b.x + 8, b.y + 50);
+      }
+    }
+    return;
+  }
+
+  if (screenState === 'ABOUT') {
+    if (!drawRawToCtx(ctx, 'about.raw', 'about.pal', 0, 0, false)) {
+      ctx.fillStyle = '#0f172a'; ctx.fillRect(0, 0, 640, 480);
+      ctx.strokeStyle = '#38bdf8'; ctx.lineWidth = 2; ctx.strokeRect(20, 20, 600, 440);
+      ctx.fillStyle = '#38bdf8'; ctx.font = 'bold 22px Courier New';
+      ctx.fillText('О ПРОГРАММЕ "СНЕЖНАЯ ВОЙНА" (1998)', 85, 75);
+      ctx.fillStyle = '#e2e8f0'; ctx.font = '15px Courier New';
+      var lines = [
+        'Южно-Уральский Государственный Университет (ЮУрГУ)',
+        'Кафедра прикладной математики',
+        'Курсовая работа по курсу "ООП"',
+        '',
+        'Выполнили: ст. гр. ПМФ-201',
+        '  * Лицкий А.Ю. (Litsky A.Yu.)',
+        '  * Виноградов А.В. (Vinogradov A.V.)',
+        'Проверил: Демидов А.К.',
+        'г. Челябинск, 1998 г.',
+        '',
+        '[ Нажмите в любом месте для возврата в меню ]'
+      ];
+      for (var l = 0; l < lines.length; l++) ctx.fillText(lines[l], 65, 125 + l * 26);
+    }
+    return;
+  }
+
+  if (screenState === 'TOPTEN') {
+    var hasTopTenBg = drawRawToCtx(ctx, 'topten.raw', 'topten.pal', 0, 0, false);
+    if (!hasTopTenBg) {
+      ctx.fillStyle = '#1e1b4b'; ctx.fillRect(0, 0, 640, 480);
+    }
+
+    // Semi-transparent dark backdrop panel so scores are always crisp and readable against snow/white art
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.72)';
+    ctx.fillRect(145, 78, 355, 325);
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.6)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(145, 78, 355, 325);
+
+    if (!hasTopTenBg) {
+      ctx.font = 'bold 24px Courier New';
+      drawOutlinedText('ТАБЛИЦА РЕКОРДОВ (TOP TEN)', 130, 55, '#facc15', '#000000', 4);
+    }
+
+    // Exact coordinates from TOPTEN.H: LUName(180,100), LUPoint(420,100), Height(30)
+    ctx.font = 'bold 18px Courier New';
+    for (var r = 0; r < highScores.length; r++) {
+      var rec = highScores[r];
+      var ry = 104 + r * 30;
+      var rankPrefix = (r + 1 < 10 ? ' ' : '') + (r + 1) + '. ';
+      drawOutlinedText(rankPrefix + rec.name, 160, ry, '#f8fafc', '#020617', 4);
+      drawOutlinedText(String(rec.points), 425, ry, '#fde047', '#020617', 4);
+    }
+
+    ctx.font = 'bold 14px Courier New';
+    drawOutlinedText('[ Нажмите для возврата в главное меню ]', 150, 455, '#38bdf8', '#020617', 4);
+    return;
+  }
+
+  // GAME SCREEN (640x480)
+  var hasGameBg = drawRawToCtx(ctx, 'game.raw', 'game.pal', 0, 0, false);
+  if (!hasGameBg) {
+    ctx.fillStyle = '#334155'; ctx.fillRect(0, 0, 640, 440);
+    ctx.fillStyle = '#1e293b'; ctx.fillRect(0, 440, 640, 40);
+    // Draw built-in status grid boxes matching game.raw layout
+    ctx.strokeStyle = '#64748b'; ctx.lineWidth = 2;
+    ctx.strokeRect(80, 440, 160, 40);
+    ctx.strokeRect(240, 440, 80, 20);
+    ctx.strokeRect(240, 460, 80, 20);
+    ctx.strokeRect(320, 440, 80, 20);
+    ctx.strokeRect(320, 460, 80, 20);
+    ctx.strokeRect(400, 440, 80, 20);
+    ctx.strokeRect(400, 460, 80, 20);
+    ctx.strokeRect(480, 440, 80, 20);
+    ctx.strokeRect(480, 460, 80, 20);
+  }
+
+  for (var y = 0; y < MAX_Y; y++) {
+    for (var x = 0; x < MAX_X; x++) {
+      var sx = x * 20 + 20, sy = y * 20 + 20;
+      var t = map.SnowMap[y][x];
+      if (!drawRawToCtx(ctx, 'cell' + t + '.raw', 'game.pal', sx, sy, false)) {
+        if (t === SNOW) ctx.fillStyle = '#e2e8f0';
+        else if (t >= ICE && t < CRUMB) ctx.fillStyle = '#7dd3fc';
+        else if (t >= CRUMB && t < PATH_U) ctx.fillStyle = '#cbd5e1';
+        else if (t >= PATH_U && t < TREE_SNOW) ctx.fillStyle = '#94a3b8';
+        else ctx.fillStyle = '#cbd5e1';
+        ctx.fillRect(sx, sy, 20, 20);
+        ctx.strokeStyle = 'rgba(100,116,139,0.25)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(sx, sy, 20, 20);
+
+        if (t === TREE_SNOW || t === TREE_CRUMB) {
+          ctx.fillStyle = '#15803d';
+          ctx.beginPath();
+          ctx.moveTo(sx + 10, sy + 2); ctx.lineTo(sx + 18, sy + 17); ctx.lineTo(sx + 2, sy + 17);
+          ctx.fill();
+        }
+      }
+
+      // Only show green reachable tiles during the player's turn when a player snowman is selected
+      if (!isComputerTurn && selectedUnit && selectedUnit.side === HUMAN && map.Fill[y][x] <= selectedUnit.ap) {
+        ctx.fillStyle = 'rgba(34, 197, 94, 0.24)';
+        ctx.fillRect(sx, sy, 20, 20);
+      }
+
+      var b = map.isBonus(x, y);
+      if (b !== -1 && !drawRawToCtx(ctx, 'bonus' + b + '.raw', 'game.pal', sx, sy, true)) {
+        var colors = ['#0284c7', '#eab308', '#ef4444'];
+        ctx.fillStyle = colors[b];
+        ctx.fillRect(sx + 4, sy + 4, 12, 12);
+        ctx.strokeStyle = '#000'; ctx.strokeRect(sx + 4, sy + 4, 12, 12);
+      }
+    }
+  }
+
+  function drawFlag(pos, side) {
+    var sx = pos.x * 20 + 20, sy = pos.y * 20 + 20;
+    if (!drawRawToCtx(ctx, 'flag' + side + '.raw', 'game.pal', sx, sy, true)) {
+      ctx.fillStyle = side === HUMAN ? '#2563eb' : '#dc2626';
+      ctx.fillRect(sx + 5, sy + 3, 12, 9);
+      ctx.fillStyle = '#000'; ctx.fillRect(sx + 4, sy + 3, 2, 15);
+    }
+  }
+  drawFlag(map.CFlag, COMPUTER);
+  drawFlag(map.HFlag, HUMAN);
+
+  function drawUnit(u) {
+    var sx = u.x * 20 + 20, sy = u.y * 20 + 20;
+    var rawName = (u.side === HUMAN ? 'pic_h' : 'pic_c') + u.type + '.raw';
+    if (!drawRawToCtx(ctx, rawName, 'game.pal', sx, sy, true)) {
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath(); ctx.arc(sx + 10, sy + 13, 6, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(sx + 10, sy + 6, 4.5, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = u.side === HUMAN ? '#1d4ed8' : '#dc2626';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(sx + 2, sy + 2, 16, 16);
+      var hats = ['#3b82f6', '#06b6d4', '#eab308', '#ef4444'];
+      ctx.fillStyle = hats[u.type];
+      ctx.fillRect(sx + 6, sy + 1, 8, 3);
+    }
+    // Red outline around enemy snowmen that are in firing range of the currently selected player snowman
+    // (only shown if the selected player snowman has enough AP to shoot)
+    if (!isComputerTurn && u.side === COMPUTER && selectedUnit && selectedUnit.side === HUMAN && canUnitFireAt(selectedUnit, u.x, u.y)) {
+      ctx.strokeStyle = '#ef4444';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(sx + 1, sy + 1, 18, 18);
+    }
+    if (!isComputerTurn && u === selectedUnit) {
+      if (!drawRawToCtx(ctx, 'curpic.raw', 'game.pal', sx, sy, true)) {
+        ctx.strokeStyle = '#facc15'; ctx.lineWidth = 2;
+        ctx.strokeRect(sx + 1, sy + 1, 18, 18);
+      }
+    }
+  }
+  for (var c = 0; c < compArmy.length; c++) drawUnit(compArmy[c]);
+  for (var h = 0; h < humanArmy.length; h++) drawUnit(humanArmy[h]);
+
+  if (activeProjectile) {
+    if (!drawRawToCtx(ctx, 'bullet' + activeProjectile.type + '.raw', 'game.pal', activeProjectile.x, activeProjectile.y, true)) {
+      ctx.fillStyle = activeProjectile.type === FIRE_MAN ? '#f97316' : '#ffffff';
+      ctx.beginPath();
+      ctx.arc(activeProjectile.x + 5, activeProjectile.y + 5, 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  if (activeExplosion) {
+    if (!drawRawToCtx(ctx, 'expl' + activeExplosion.type + '.raw', 'game.pal', activeExplosion.x, activeExplosion.y, true)) {
+      ctx.fillStyle = '#ef4444';
+      ctx.beginPath();
+      ctx.arc(activeExplosion.x + 10, activeExplosion.y + 10, 9, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // ==========================================================================
+  // BOTTOM STATUS BAR (y = 440..479, exact match to SnowMan::ShowStatus in GAME.H)
+  // ==========================================================================
+  // Quit Button (0,440)..(79,479) and End Turn Button (560,440)..(639,479)
+  if (pressedButtonIdx === 0) {
+    drawRawToCtx(ctx, 'button0.raw', 'game.pal', 0, 440, false);
+  } else if (!hasGameBg) {
+    ctx.fillStyle = '#991b1b'; ctx.fillRect(0, 440, 80, 40);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 12px Courier New';
+    ctx.fillText('ВЫХОД', 18, 464);
+  }
+
+  if (pressedButtonIdx === 1) {
+    drawRawToCtx(ctx, 'button1.raw', 'game.pal', 560, 440, false);
+  } else if (!hasGameBg) {
+    ctx.fillStyle = '#15803d'; ctx.fillRect(560, 440, 80, 40);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 12px Courier New';
+    ctx.fillText('КОНЕЦ ХОДА', 564, 464);
+  }
+
+  // Use original STATUS0..STATUS9.RAW sprites if loaded (exact GAME.H coordinates!)
+  var hasStatusSprites = hasRaw('status0.raw') && hasRaw('status5.raw') && hasRaw('status9.raw');
+  if (hasStatusSprites) {
+    if (selectedUnit && !isComputerTurn) {
+      var st = SnowType[selectedUnit.type];
+      drawRawToCtx(ctx, 'status' + selectedUnit.type + '.raw', 'game.pal', 80, 440, false);
+      for (var i = 0; i < 8; i++) {
+        // AP bar at (480 + i*10, 440)
+        drawRawToCtx(ctx, 'status9.raw', 'game.pal', 480 + i * 10, 440, false);
+        if (i < selectedUnit.ap) drawRawToCtx(ctx, 'status' + AP_PIC + '.raw', 'game.pal', 480 + i * 10, 440, true);
+        // Health bar at (320 + i*10, 440)
+        drawRawToCtx(ctx, 'status9.raw', 'game.pal', 320 + i * 10, 440, false);
+        if (i < selectedUnit.health) drawRawToCtx(ctx, 'status' + HEALTH_PIC + '.raw', 'game.pal', 320 + i * 10, 440, true);
+        // CostToFire bar at (480 + i*10, 460)
+        drawRawToCtx(ctx, 'status9.raw', 'game.pal', 480 + i * 10, 460, false);
+        if (i < st.CostToFire) drawRawToCtx(ctx, 'status' + COST_PIC + '.raw', 'game.pal', 480 + i * 10, 460, true);
+        // Damage bar at (320 + i*10, 460)
+        drawRawToCtx(ctx, 'status9.raw', 'game.pal', 320 + i * 10, 460, false);
+        if (i < st.Damage) drawRawToCtx(ctx, 'status' + DAMAGE_PIC + '.raw', 'game.pal', 320 + i * 10, 460, true);
+      }
+    } else {
+      drawRawToCtx(ctx, 'status' + EMPTY_NAME + '.raw', 'game.pal', 80, 440, false);
+      for (var k = 0; k < 8; k++) {
+        drawRawToCtx(ctx, 'status9.raw', 'game.pal', 320 + k * 10, 440, false);
+        drawRawToCtx(ctx, 'status9.raw', 'game.pal', 320 + k * 10, 460, false);
+        drawRawToCtx(ctx, 'status9.raw', 'game.pal', 480 + k * 10, 440, false);
+        drawRawToCtx(ctx, 'status9.raw', 'game.pal', 480 + k * 10, 460, false);
+      }
+    }
+  } else if (selectedUnit && !isComputerTurn) {
+    // Fallback compact text neatly fitted into the exact 6 boxes when no RAW files are loaded:
+    // Name box: x=80..239 (width 160)
+    // Label boxes: x=240..319 (width 80) & x=400..479 (width 80)
+    // Value boxes: x=320..399 (width 80) & x=480..559 (width 80)
+    var stFallback = SnowType[selectedUnit.type];
+    ctx.font = 'bold 11px Courier New';
+    drawOutlinedText(stFallback.name, 85, 455, '#38bdf8', '#000', 3);
+    ctx.font = '10px Courier New';
+    drawOutlinedText(statusMsg.slice(0, 22), 85, 472, '#e2e8f0', '#000', 3);
+
+    if (!hasGameBg) {
+      ctx.font = 'bold 10px Courier New';
+      drawOutlinedText('Здоровье',   246, 454, '#f472b6', '#000', 2);
+      drawOutlinedText('Мощность',   246, 474, '#fb923c', '#000', 2);
+      drawOutlinedText('Время',      406, 454, '#e2e8f0', '#000', 2);
+      drawOutlinedText('На выстрел', 406, 474, '#38bdf8', '#000', 2);
+    }
+
+    ctx.font = 'bold 11px Courier New';
+    drawOutlinedText(selectedUnit.health + ' / ' + stFallback.Health, 326, 454, '#f87171', '#000', 3);
+    drawOutlinedText(String(stFallback.Damage),                       326, 474, '#fb923c', '#000', 3);
+    drawOutlinedText(selectedUnit.ap + ' / ' + stFallback.AP,         486, 454, '#4ade80', '#000', 3);
+    drawOutlinedText(stFallback.CostToFire + ' (Д:' + stFallback.Range + ')', 486, 474, '#60a5fa', '#000', 3);
+  }
+}
+
+// ============================================================================
+// 6. POINTER / TOUCH / CLICK INPUT
+// ============================================================================
+canvas.addEventListener('pointerdown', async function(e) {
+  e.preventDefault();
+  if (isBusy) return;
+  var rect = canvas.getBoundingClientRect();
+  var px = Math.floor((e.clientX - rect.left) * (640 / rect.width));
+  var py = Math.floor((e.clientY - rect.top) * (480 / rect.height));
+
+  if (screenState === 'MAIN') {
+    if (px >= 480 && py >= 300) startNewBattle();
+    else if (px >= 350 && px <= 519 && py >= 90 && py <= 189) { screenState = 'TOPTEN'; render(); }
+    else if (px >= 190 && px <= 299 && py >= 150 && py <= 219) { screenState = 'ABOUT'; render(); }
+    else if (px <= 199 && py >= 420) {
+      clearScoresSafe();
+      highScores = defaultHighScores.slice();
+      alert('Таблица рекордов сброшена!');
+      render();
+    }
+    return;
+  }
+
+  if (screenState === 'ABOUT' || screenState === 'TOPTEN') {
+    screenState = 'MAIN'; render(); return;
+  }
+
+  if (screenState === 'GAME') {
+    if (px < 80 && py >= 440) {
+      pressedButtonIdx = 0; render(); await sleep(150); pressedButtonIdx = -1;
+      screenState = 'MAIN'; render(); return;
+    }
+    if (px >= 560 && py >= 440) {
+      pressedButtonIdx = 1; render(); await sleep(150); pressedButtonIdx = -1;
+      await runComputerTurn(); return;
+    }
+
+    if (px >= 20 && px < 620 && py >= 20 && py < 420) {
+      var mx = Math.floor(px / 20) - 1;
+      var my = Math.floor(py / 20) - 1;
+
+      var own = null;
+      for (var i = 0; i < humanArmy.length; i++) {
+        if (humanArmy[i].x === mx && humanArmy[i].y === my) { own = humanArmy[i]; break; }
+      }
+      if (own) {
+        selectedUnit = own;
+        map.fillMap(own.x, own.y, own.ap, humanArmy.concat(compArmy));
+        statusMsg = "Время:" + own.ap + " Здор:" + own.health;
+        render();
+        return;
+      }
+
+      var enemy = null;
+      for (var j = 0; j < compArmy.length; j++) {
+        if (compArmy[j].x === mx && compArmy[j].y === my) { enemy = compArmy[j]; break; }
+      }
+      if (enemy && selectedUnit) {
+        var st = SnowType[selectedUnit.type];
+        if (canUnitFireAt(selectedUnit, mx, my)) {
+          isBusy = true;
+          await fireSnowball(selectedUnit, enemy);
+          isBusy = false;
+          if (selectedUnit && humanArmy.indexOf(selectedUnit) !== -1) {
+            map.fillMap(selectedUnit.x, selectedUnit.y, selectedUnit.ap, humanArmy.concat(compArmy));
+          }
+          render();
+          checkVictory();
+        } else {
+          statusMsg = "Нужно " + st.CostToFire + " вр. / Дальн. " + st.Range;
+          render();
+        }
+        return;
+      }
+
+      if (selectedUnit && map.Fill[my][mx] <= selectedUnit.ap) {
+        isBusy = true;
+        var path = map.findPath(mx, my);
+        for (var p = 0; p < path.length; p++) {
+          var step = path[p];
+          var c = map.costToMove(step.x, step.y) + isDiag(selectedUnit.x, selectedUnit.y, step.x, step.y);
+          if (c <= selectedUnit.ap) {
+            selectedUnit.ap -= c;
+            selectedUnit.x = step.x;
+            selectedUnit.y = step.y;
+            applyBonusIfPresent(selectedUnit);
+            render();
+            await sleep(65);
+          }
+        }
+        isBusy = false;
+        map.fillMap(selectedUnit.x, selectedUnit.y, selectedUnit.ap, humanArmy.concat(compArmy));
+        render();
+        checkVictory();
+      }
+    }
+  }
+});
+
+render();
+</script>
+</body>
+</html>
